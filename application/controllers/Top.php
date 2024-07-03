@@ -20,7 +20,41 @@ class Top extends CI_Controller {
 	 */
 	public function index()
 	{
-		$this->load->view('index');
+		$users = [
+			0 => [
+				'name' 		=> '黒田',
+				'id' 		=> '4528',
+				'job_type' 	=> 10,
+			],
+			1 => [
+				'name' 		=> '加藤',
+				'id' 		=> '4158',
+				'job_type' 	=> 10,
+			],
+			2 => [
+				'name' 		=> '小泉',
+				'id' 		=> '4558',
+				'job_type' 	=> 10,
+			],
+			3 => [
+				'name' 		=> '田中',
+				'id' 		=> '3558',
+				'job_type' 	=> 20,
+			],
+			4 => [
+				'name' 		=> '山田',
+				'id' 		=> '2558',
+				'job_type' 	=> null,
+			],
+		];
+		$list[0] = "すべて";
+		$list[-1] = "<担当者なし>";
+		foreach($users as $tantou) {
+			$list[$tantou['job_type'] == '10' ? '医者' : ($tantou['job_type'] == '20' ? '看護師' : '事務')][$tantou['id']] = $tantou->name;
+		}
+		$data['list'] = $list;
+		$this->load->helper('form');
+		$this->load->view('index', $data);
 	}
 	public function sub()
 	{

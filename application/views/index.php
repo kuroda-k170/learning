@@ -25,12 +25,11 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 <body>
 	<!-- ボタンをおしたら、jsのイベントが動作してプルダウンの中に配列が置き換わる -->
 <div class="container">
-	<select name="pulldown" class="form-select" aria-label="Default select example">
-		<option selected>Open this select menu</option>
-		<option value="1">One</option>
-		<option value="2">Two</option>
-		<option value="3">Three</option>
-	</select>
+	<?php echo form_dropdown('pulldown',$list) ?>
+	<!-- <?php
+	echo('<pre>');
+	var_dump($list);
+	echo('</pre>');?> -->
 	<div id="add">
 	</div>
 	<div class="container">
@@ -100,7 +99,7 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 	$('#change').click(function() {
 		$('[name = "pulldown"]').empty();
 		// $('[name = "pulldown"]').append(list);
-		$('#add').append(list);
+		$('#add').html(list);
 		console.log(list);
 	})
 

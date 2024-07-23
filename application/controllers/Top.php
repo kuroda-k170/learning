@@ -1,7 +1,8 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Top extends CI_Controller {
+// class Top extends CI_Controller {
+class Top extends MY_Controller {
 
 	/**
 	 * Index Page for this controller.
@@ -50,14 +51,41 @@ class Top extends CI_Controller {
 		$list[0] = "すべて";
 		$list[-1] = "<担当者なし>";
 		foreach($users as $tantou) {
-			$list[$tantou['job_type'] == '10' ? '医者' : ($tantou['job_type'] == '20' ? '看護師' : '事務')][$tantou['id']] = $tantou->name;
+			$list[$tantou['job_type'] == '10' ? '医者' : ($tantou['job_type'] == '20' ? '看護師' : '事務')][$tantou['id']] = $tantou['name'];
 		}
 		$data['list'] = $list;
+		$test = "test";
+		$to = "to";
+		$from = "from";
+		$param = ['to' =>$to, 'from' =>$from,];
+		$this->test($test,$to,$from);
+		// $this->test($test);
 		$this->load->helper('form');
 		$this->load->view('index', $data);
 	}
+
 	public function sub()
 	{
 		$this->load->view('sub');
+	}
+
+	public function test($test, $from = null, $to = null,)
+	// public function test($test)
+	{
+		// $test ="test";
+		$data = [];
+		if (isset($from))
+		{
+			$from ="from+";
+			$to ="to+";
+			$data['test'] =$test;
+			$data['from'] =$from;
+			$data['to'] =$to;
+		}
+
+		echo('<pre>');
+		var_dump($data);
+		echo('<pre>');
+		return $data;
 	}
 }

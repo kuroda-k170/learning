@@ -1,55 +1,52 @@
 8/27
     新規画面作成
 
-        ①オートコンプリートを正規化
+        ①オートコンプリートを正規化 +
+        自身に代入するときの変数名
         Autocompleteでサジェスト候補を半角・全角に関係なく表示させたい場合、source関数で入力された文字列を編集し、検索時に半角・全角の違いを無視して処理するのが良い方法です。
 
-具体的には、全角文字を半角に変換し、半角文字を全角に変換するような処理を行うことで、どちらの形式で入力されても一致するようにすることが可能です。
-
-以下は、その実装例です。
-
-例：半角・全角を無視してサジェストを表示するコード
-javascript
-コードをコピーする
-$(document).ready(function() {
-    var data = ["ｱﾝﾄﾞﾛｲﾄﾞ", "android", "アップル", "apple", "バナナ", "banana"];
-
-    // 半角を全角に、全角を半角に変換する関数
-    function normalizeInput(input) {
-        return input.replace(/[Ａ-Ｚａ-ｚ０-９]/g, function(s) {
-            return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
-        }).replace(/[A-Za-z0-9]/g, function(s) {
-            return String.fromCharCode(s.charCodeAt(0) + 0xFEE0);
-        });
+        $(".youhou_name").autocomplete({
+    source: function(request, response) {
+        var normalizedTerm = normalizeInput(request.term);  // 正規化された入力値を明示的な変数に代入
+        response(data);  // サジェスト候補を表示
     }
 
-    // Autocompleteの設定
-    $(".youhou_name").autocomplete({
-        source: function(request, response) {
-            var searchTerm = normalizeInput(request.term); // 入力された文字を変換
-            var filteredData = data.filter(function(item) {
-                return normalizeInput(item).indexOf(searchTerm) !== -1;
-            });
-            response(filteredData);
-        },
-        minLength: 1
-    });
-});
-説明
-normalizeInput関数:
+        ②実行計画
 
-入力された文字列を正規化するための関数です。全角英数字を半角に、半角英数字を全角に変換します。
-この関数を使って、入力された文字とサジェスト候補の文字列を統一的に扱えるようにします。
-source関数内での正規化:
+            public function get_query_execution_plan() {
+            // 実行計画を取得するクエリ（MySQLの場合）
+            $sql = "EXPLAIN SELECT * FROM users WHERE id = ?";
+            
+            // クエリを実行し、結果を取得
+            $query = $this->db->query($sql, array(1));
+            
+            // 結果を返す
+            return $query->result_array();  // 配列で返す
+            }
 
-request.term（ユーザーが入力した文字）を正規化して、サジェスト候補をフィルタリングします。
-dataの各候補も正規化してから、入力文字列に一致するかどうかをチェックします。
-フィルタリング:
+        ③リダイレクト時にデータ渡す
+            フラッシュデータを使って渡す
+                CodeIgniterのsessionクラスのflashdataを使うと、セッションを通じてリダイレクト先にパラメータを一時的に渡すことができます。この方法は、パラメータをURLに表示したくない場合に便利です。
 
-正規化された文字列で、サジェスト候補をフィルタリングし、候補が表示されるようにします。
+                例
+                php
+                public function redirect_with_flash_data() {
+                    // フラッシュデータとしてパラメータをセット
+                    $this->session->set_flashdata('param1', 'value1');
+                    $this->session->set_flashdata('param2', 'value2');
 
-②別テーブルから、カラムを追加して全件コピー
+                    // リダイレクト
+                    redirect('controller_name/method_name');
+                }
+                受け取り側での処理
+                php
+                public function method_name() {
+                    // フラッシュデータを取得
+                    $param1 = $this->session->flashdata('param1');
+                    $param2 = $this->session->flashdata('param2');
 
+                    echo "Param1: $param1, Param2: $param2";
+                }
 ③サジェストソート
 
 ④SQLソート（アルファベット含む数字）

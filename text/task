@@ -1,81 +1,102 @@
-9/13
-    新規画面作成
+10/23
+        不具合の検証パターン網羅
+        メソッド追いかけるの時間かかる
+        IDEの機能で便利にできる？
 
-        ①Ajax共通化
-                autocompleteのselectイベントで共通のAjax処理を使う場合、関数化して、その関数を呼び出すことで共通化が可能です。ここでは、autocompleteのselectイベント内で実行するAjax処理を共通化し、呼び出す方法を示します。
+        実装するときのイメージ
+                「今回だけ」の時の挙動
 
-                例：autocompleteのselectイベント内でのAjax処理共通化
-                1. Ajax処理を関数化
-                まず、Ajax処理を関数として定義します。この関数は、autocompleteのselectイベントから呼び出されます。
-
-                javascript
-                コードをコピーする
-                function performAjaxOnSelect(selectedValue) {
-                $.ajax({
-                        url: '/api/some_endpoint', // 共通のURL
-                        type: 'POST',
-                        data: { value: selectedValue },
-                        success: function(response) {
-                        // 通信成功時の共通処理
-                        console.log('Ajax Success:', response);
-                        // 例: 画面にデータを表示するなどの処理
-                        },
-                        error: function(xhr, status, error) {
-                        // エラー時の処理
-                        console.log('Ajax Error:', error);
-                        }
-                });
-                }
-                2. autocompleteのselectイベントで共通のAjax処理を呼び出す
-                autocompleteのselectイベント内で、共通化した関数を呼び出します。
-
-                javascript
-                コードをコピーする
-                $(document).ready(function() {
-                // 1つ目のautocompleteの設定
-                $("#autocomplete1").autocomplete({
-                        source: availableTags, // サジェストデータ
-                        select: function(event, ui) {
-                        // 選択時に共通Ajax処理を呼び出す
-                        performAjaxOnSelect(ui.item.value);
-                        }
-                });
-
-                // 2つ目のautocompleteの設定
-                $("#autocomplete2").autocomplete({
-                        source: availableTags, // サジェストデータ
-                        select: function(event, ui) {
-                        // 選択時に共通Ajax処理を呼び出す
-                        performAjaxOnSelect(ui.item.value);
-                        }
-                });
-                });
-                3. 説明
-                performAjaxOnSelect関数:
-                autocompleteのselectイベントで選択された値を引数として受け取り、それを使って共通のAjax処理を実行します。
-                autocompleteのselectイベント内で共通化した関数を呼び出し:
-                autocomplete1やautocomplete2で選択された値に応じて、同じAjax処理を行うようにしています。
-                まとめ
-                Ajax処理を関数化しておくことで、複数のautocompleteのselectイベントで共通の処理を再利用することができ、コードの重複を避けられます。
-                選択された値に応じて動作するAjax処理を柔軟に共通化することが可能です。
-                このようにして、同じAjax処理を使いたい場合、簡潔かつ再利用性の高いコードにすることができます。
+                「今回以降」の時の挙動
 
 
-②SQLソート（アルファベット含む数字）
-        例: より一般的な文字列の場合
-        数値とアルファベットの位置が固定されていない場合や、数値部分が変動する場合も考慮して、正規表現を使う方法もあります。
+        の問題は、2つの重なっている要素にマウスがオーバーしたときに、両方の要素が同時に「マウスオーバー」のイベントを受け取ってしまうために発生しています。結果的に、2つの要素に対して吹き出しが表示されることになります。
 
-        方法2: 正規表現で数値部分を抽出してソート
-        MySQL 8.0以上では、正規表現を使って数値部分を抽出することができます。例えば、数字とアルファベットの混在する文字列を扱う場合に以下のように正規表現で対応できます。
+原因
+イベント伝播: マウスオーバー時に、複数の要素が重なっているため、親要素と子要素、もしくは同じ場所にある複数の要素で、双方にマウスオーバーイベントが発生してしまいます。
+重なった要素のz-indexや要素の配置の問題: 2つの吹き出しが重なり、ユーザーがどちらかにマウスを動かしてもイベントが発生してしまうことがあります。
+解決策
+1つ目の吹き出しが表示されているとき、2つ目の吹き出しを非表示にする
+これはJavaScriptで、最初に発生した吹き出しイベントが発生した場合、他の要素に対してはイベントを一時的に無効にすることで解決できます。
+方法1: マウスオーバーイベントを管理する
+以下の例では、吹き出しが1つ表示されている間は、他の要素の吹き出し表示を無効にする方法を紹介します。
 
-        sql
-        コードをコピーする0122
-        SELECT column_name
-        FROM table_name
-        ORDER BY
-        REGEXP_SUBSTR(column_name, '^[0-9]+'), -- 先頭の数値部分を抽出してソート
-        REGEXP_SUBSTR(column_name, '[A-Z]+'); -- アルファベット部分を抽出してソート
+javascript
+コードをコピーする
+let isTooltipVisible = false; // 吹き出しが表示されているかを管理
 
+// 1つ目の要素のマウスオーバーイベント
+document.getElementById('element1').addEventListener('mouseover', function() {
+    if (!isTooltipVisible) {
+        showTooltip('element1');
+        isTooltipVisible = true; // 吹き出しが表示中
+    }
+});
 
-③グリッドがズレる
-        テーブルボディの描画のタイミングが、ページ読み込みの時じゃないからうまくいかない
+// 2つ目の要素のマウスオーバーイベント
+document.getElementById('element2').addEventListener('mouseover', function() {
+    if (!isTooltipVisible) {
+        showTooltip('element2');
+        isTooltipVisible = true; // 吹き出しが表示中
+    }
+});
+
+// マウスが要素から外れたとき
+document.getElementById('element1').addEventListener('mouseout', function() {
+    hideTooltip('element1');
+    isTooltipVisible = false; // 吹き出しが非表示になった
+});
+
+document.getElementById('element2').addEventListener('mouseout', function() {
+    hideTooltip('element2');
+    isTooltipVisible = false; // 吹き出しが非表示になった
+});
+
+function showTooltip(elementId) {
+    // 吹き出しを表示する処理
+    console.log(`Show tooltip for ${elementId}`);
+}
+
+function hideTooltip(elementId) {
+    // 吹き出しを隠す処理
+    console.log(`Hide tooltip for ${elementId}`);
+}
+説明:
+isTooltipVisibleというフラグを使って、吹き出しが1つ表示されている間は他の要素の吹き出しを出さないようにしています。吹き出しが表示中であれば、次の吹き出しを無視します。
+z-indexの調整で、重なっている要素の吹き出しを表示させない
+要素が重なっている場合、CSSのz-indexを調整して、常に1つ目の要素の吹き出しが優先されるようにすることも有効です。
+例:
+css
+コードをコピーする
+#element1 {
+    position: relative;
+    z-index: 10; /* element1を優先 */
+}
+
+#element2 {
+    position: relative;
+    z-index: 5; /* element2は後ろ */
+}
+
+.tooltip {
+    position: absolute;
+    z-index: 100; /* 吹き出しが他の要素よりも前に出るように */
+}
+このように、要素の重なり具合を調整し、吹き出しの位置が他の要素に干渉しないようにします。
+
+吹き出しのオーバーレイを回避する
+吹き出しが表示されたとき、要素が他の要素に被らないように吹き出しの表示位置を調整するのも有効です。マウスオーバー時に表示される吹き出しが、他の要素に被らないように位置を制御します。
+例: 吹き出しの位置調整
+css
+コードをコピーする
+.tooltip {
+    position: absolute;
+    top: 0; /* 要素の上に表示 */
+    left: 100%; /* 要素の右側に表示 */
+}
+この方法により、吹き出しが重なってしまう問題を避けることができます。
+
+まとめ
+イベント管理: 吹き出しが1つ表示されている間、他の吹き出しを表示しないようにisTooltipVisibleなどのフラグで管理します。
+z-indexの調整: 要素や吹き出しのz-indexを調整して、吹き出しが他の要素に重ならないようにします。
+表示位置の調整: 吹き出しの位置を調整して、重なりを避ける方法も有効です。
+これらの方法を組み合わせて、2つの重なった要素にマウスオーバーした際に意図しない吹き出しが表示される問題を解決できるはずです。

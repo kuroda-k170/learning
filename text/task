@@ -1,102 +1,324 @@
-10/23
-        不具合の検証パターン網羅
-        メソッド追いかけるの時間かかる
-        IDEの機能で便利にできる？
+11/13
+    モーダル作成タスク
+        ①処方箋情報の表示の仕方がわからない
+            jQuery tmplでどうやってデータを取得してるかがわからない、
+            そこがわかれば同じメソッド使って行ける気がする
 
-        実装するときのイメージ
-                「今回だけ」の時の挙動
+            やりたいこと
+            （確定前）処方箋情報をモーダルに表示したい
 
-                「今回以降」の時の挙動
+            わからないこと
+            jQuery tmplでどやってデータをセットしてるのか？がわからない
+            dataってなってるけど、PHP側のdataにはカルテ情報とか入ってなさそうやった
+
+        ②エラー情報を取得、表示したい
+            実際のテーブルがないから、仮やけど進めてる
+            名称とかちゃんと確認して、取得するためのキー（カルテ内部ID？）を確認したら
+            ある程度は完成させられると思う
+
+        ③モーダルオープン時に勝手にコメント入力欄にフォーカスがあって、スクロールされる問題を解決したい
 
 
-        の問題は、2つの重なっている要素にマウスがオーバーしたときに、両方の要素が同時に「マウスオーバー」のイベントを受け取ってしまうために発生しています。結果的に、2つの要素に対して吹き出しが表示されることになります。
 
-原因
-イベント伝播: マウスオーバー時に、複数の要素が重なっているため、親要素と子要素、もしくは同じ場所にある複数の要素で、双方にマウスオーバーイベントが発生してしまいます。
-重なった要素のz-indexや要素の配置の問題: 2つの吹き出しが重なり、ユーザーがどちらかにマウスを動かしてもイベントが発生してしまうことがあります。
+自動的にinputやtextareaにフォーカスが当たってしまい、ページが下部までスクロールされる原因は、JavaScriptやブラウザのデフォルト動作で、最初のフォーカス可能な要素（inputやtextareaなど）に自動的にフォーカスが移ってしまうことにあります。
+
 解決策
-1つ目の吹き出しが表示されているとき、2つ目の吹き出しを非表示にする
-これはJavaScriptで、最初に発生した吹き出しイベントが発生した場合、他の要素に対してはイベントを一時的に無効にすることで解決できます。
-方法1: マウスオーバーイベントを管理する
-以下の例では、吹き出しが1つ表示されている間は、他の要素の吹き出し表示を無効にする方法を紹介します。
+いくつかの対策を考えられますので、試してみてください。
+
+1. 最初にフォーカスしないように制御する
+JavaScriptでモーダルが表示されたときに、特定の要素にフォーカスしないように制御する方法です。focus()関数を使って、別の非表示の要素やモーダル自体にフォーカスを当てることで、意図しない要素へのフォーカスを防ぎます。
+
+例：
+javascript
+コードをコピーする
+$("#myModal").on("dialogopen", function() {
+    $(this).find(":focusable").first().blur(); // フォーカスが当たらないように設定
+});
+または、モーダルが表示された後に、非フォーカス対象の要素にフォーカスを移す方法です。
 
 javascript
 コードをコピーする
-let isTooltipVisible = false; // 吹き出しが表示されているかを管理
+$("#myModal").on("dialogopen", function() {
+    setTimeout(function() {
+        $("#myModal").focus(); // モーダル全体にフォーカス
+    }, 10); // モーダルが開いた直後にフォーカスを設定
+});
+2. CSSを使って一時的にフォーカス可能な要素を無効にする
+もしすべてのフォーム要素が初期表示時にフォーカスされないようにしたい場合、CSSでpointer-events: none;を一時的に設定し、フォーカスが当たらないように制御する方法もあります。以下のコードでは、モーダルが表示された後に、一定時間が経過してから要素をフォーカス可能に戻す方法です。
 
-// 1つ目の要素のマウスオーバーイベント
-document.getElementById('element1').addEventListener('mouseover', function() {
-    if (!isTooltipVisible) {
-        showTooltip('element1');
-        isTooltipVisible = true; // 吹き出しが表示中
+例：
+javascript
+コードをコピーする
+/* CSS */
+#myModal input,
+#myModal textarea {
+    pointer-events: none;
+}
+
+/* JavaScript */
+$("#myModal").on("dialogopen", function() {
+    setTimeout(function() {
+        $("#myModal input, #myModal textarea").css("pointer-events", "auto");
+    }, 100); // モーダルが表示された後にフォーカスを有効にする
+});
+3. 特定の要素にフォーカスが当たるように設定
+特定の要素（例えば、モーダルの最上部にある要素）に最初からフォーカスを当てておき、他のinputやtextareaに自動的にフォーカスが移らないようにする方法です。
+
+例：
+javascript
+コードをコピーする
+$("#myModal").on("dialogopen", function() {
+    $("#myModal .first-focus-element").focus(); // モーダル内の特定の要素にフォーカスを当てる
+});
+4. HTMLのautofocus属性の確認
+inputやtextareaにautofocus属性が指定されていると、ブラウザが自動的にその要素にフォーカスを当ててしまいます。もしautofocus属性が使われている場合は、削除してください。
+
+html
+コードをコピーする
+<!-- autofocusが指定されていると自動でフォーカスが当たる -->
+<input type="text" name="example" id="example" autofocus>
+5. ブラウザのデフォルトのフォーカス挙動を無効化
+一部のブラウザでは、モーダルを開いた際に自動的に最初のフォーカス可能な要素にフォーカスが当たることがあります。以下のコードで、ページ全体の初期フォーカスを無効にすることも可能です。
+
+javascript
+コードをコピーする
+$(document).on("focus", ":focusable", function(e) {
+    if ($(e.target).closest("#myModal").length) {
+        e.preventDefault(); // フォーカスを無効にする
     }
 });
-
-// 2つ目の要素のマウスオーバーイベント
-document.getElementById('element2').addEventListener('mouseover', function() {
-    if (!isTooltipVisible) {
-        showTooltip('element2');
-        isTooltipVisible = true; // 吹き出しが表示中
-    }
-});
-
-// マウスが要素から外れたとき
-document.getElementById('element1').addEventListener('mouseout', function() {
-    hideTooltip('element1');
-    isTooltipVisible = false; // 吹き出しが非表示になった
-});
-
-document.getElementById('element2').addEventListener('mouseout', function() {
-    hideTooltip('element2');
-    isTooltipVisible = false; // 吹き出しが非表示になった
-});
-
-function showTooltip(elementId) {
-    // 吹き出しを表示する処理
-    console.log(`Show tooltip for ${elementId}`);
-}
-
-function hideTooltip(elementId) {
-    // 吹き出しを隠す処理
-    console.log(`Hide tooltip for ${elementId}`);
-}
-説明:
-isTooltipVisibleというフラグを使って、吹き出しが1つ表示されている間は他の要素の吹き出しを出さないようにしています。吹き出しが表示中であれば、次の吹き出しを無視します。
-z-indexの調整で、重なっている要素の吹き出しを表示させない
-要素が重なっている場合、CSSのz-indexを調整して、常に1つ目の要素の吹き出しが優先されるようにすることも有効です。
-例:
-css
-コードをコピーする
-#element1 {
-    position: relative;
-    z-index: 10; /* element1を優先 */
-}
-
-#element2 {
-    position: relative;
-    z-index: 5; /* element2は後ろ */
-}
-
-.tooltip {
-    position: absolute;
-    z-index: 100; /* 吹き出しが他の要素よりも前に出るように */
-}
-このように、要素の重なり具合を調整し、吹き出しの位置が他の要素に干渉しないようにします。
-
-吹き出しのオーバーレイを回避する
-吹き出しが表示されたとき、要素が他の要素に被らないように吹き出しの表示位置を調整するのも有効です。マウスオーバー時に表示される吹き出しが、他の要素に被らないように位置を制御します。
-例: 吹き出しの位置調整
-css
-コードをコピーする
-.tooltip {
-    position: absolute;
-    top: 0; /* 要素の上に表示 */
-    left: 100%; /* 要素の右側に表示 */
-}
-この方法により、吹き出しが重なってしまう問題を避けることができます。
-
 まとめ
-イベント管理: 吹き出しが1つ表示されている間、他の吹き出しを表示しないようにisTooltipVisibleなどのフラグで管理します。
-z-indexの調整: 要素や吹き出しのz-indexを調整して、吹き出しが他の要素に重ならないようにします。
-表示位置の調整: 吹き出しの位置を調整して、重なりを避ける方法も有効です。
-これらの方法を組み合わせて、2つの重なった要素にマウスオーバーした際に意図しない吹き出しが表示される問題を解決できるはずです。
+JavaScriptでモーダル全体にフォーカスを設定し、特定の要素に自動的にフォーカスが当たらないようにする。
+CSSで初期フォーカスを無効化し、モーダル表示後に要素を再びフォーカス可能に戻す。
+特定の要素（autofocusがないもの）にフォーカスを設定し、意図しないフォーカス移動を防ぐ。
+autofocus属性を確認し、必要がなければ削除する。
+これらの方法を試していただくことで、自動でフォーカスが当たってスクロールされる問題が解決するかと思います。お試しください。
+
+
+
+
+
+
+あなた:
+使っている関数が
+$(#test).dialog({
+これなんですが、これはjQueryですか？
+この場合対策は変わってきますか？
+ChatGPT:
+ChatGPT
+$("#test").dialog({...});はjQuery UIのdialogメソッドです。このメソッドを使うことで、指定した要素をモーダルウィンドウとして表示することができます。jQuery UIのdialogは、開かれたときに自動で最初のフォーカス可能な要素にフォーカスを当てるため、特定の対策が必要です。
+
+jQuery UIのdialogでフォーカスが自動で当たる問題に対する対策
+jQuery UIのdialogでは、openイベントを使ってフォーカスの制御を行うことができます。また、デフォルトで最初の要素にフォーカスが当たらないようにする方法もあります。
+
+対策1: openイベントでフォーカスを制御する
+dialogのopenイベントを使って、特定の要素にフォーカスが当たらないようにします。以下のコードでは、ダイアログが開かれたときにダイアログ自体にフォーカスを当て、特定のinputやtextareaにフォーカスが自動的に移動しないようにしています。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        $(this).closest(".ui-dialog").focus();  // ダイアログ全体にフォーカスを当てる
+    }
+});
+対策2: focusイベントを無効にしてフォーカス移動を防ぐ
+ダイアログの要素全体にフォーカスが当たるのを無効にするために、最初の要素にフォーカスが当たらないように、特定のフォーカスイベントを防ぐことも可能です。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        // フォーカスが自動的に当たらないように最初のフォーカス要素を無効化
+        $(this).find("input, textarea").attr("tabindex", "-1");
+    }
+});
+対策3: appendToオプションでダイアログの親要素を指定する
+appendToオプションを使って、ダイアログの親要素をbodyに指定することで、特定の要素にフォーカスが当たらないように制御できます。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    appendTo: "body", // ダイアログの親要素をbodyに指定
+    open: function(event, ui) {
+        $(this).closest(".ui-dialog").focus();
+    }
+});
+対策4: focusイベントを完全に無効にする
+場合によっては、ダイアログ内のinputやtextareaに対してフォーカスが当たらないようにするために、フォーカス可能な要素すべてをblur()することで強制的にフォーカスを外す方法もあります。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        $(this).find("input, textarea").blur(); // ダイアログ内の要素からフォーカスを外す
+    }
+});
+まとめ
+openイベントでフォーカスを調整することで、意図しないinputやtextareaにフォーカスが当たらないようにできます。
+appendToオプションでダイアログの親要素をbodyにすることで、特定の位置へのスクロールを防ぐことができます。
+必要に応じて**tabindexを無効に**することで、特定の要素にフォーカスが当たるのを防ぐことも有効です。
+これらの対策を試して、モーダルウィンドウが自動スクロールしてしまう問題を解決できるか確認してみてください。
+
+
+
+
+
+
+あなた:
+対策1: openイベントでフォーカスを制御する
+この対策のおかげで、フォーカスが当たることはなくなったんですが、
+対象のtextareaに設定されているイベントの発火と、下部へのスクロールは変わらず怒っています。これの対策はどうすればいいですか？
+ChatGPT:
+ChatGPT
+対策1でフォーカスが当たることは防げたものの、textareaに設定されているイベントの発火や、画面の下部へのスクロールが起こってしまうのは、ブラウザがデフォルトで最初のフォーカス可能な要素にスクロールしてしまうことが原因です。
+
+追加の対策
+以下の方法で、イベントの発火やスクロールを防ぐことができるか確認してみてください。
+
+対策1: ダイアログを開く前に一時的にtextareaのフォーカスイベントを無効にする
+textareaのフォーカスイベントを一時的に無効にし、ダイアログが開いた後に再度有効にする方法です。これにより、textareaがイベントを発火するのを防ぎ、スクロールの原因となるブラウザの自動フォーカス処理を回避します。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        // 一時的にtextareaのフォーカスイベントを解除
+        $("#test").find("textarea").off("focus.prevent");
+
+        // ダイアログが完全に開かれてから、フォーカスイベントを再度有効化
+        setTimeout(function() {
+            $("#test").find("textarea").on("focus.prevent", function(e) {
+                e.preventDefault(); // フォーカスが当たってもスクロールしないようにする
+            });
+        }, 10);
+    },
+    close: function(event, ui) {
+        // ダイアログを閉じたときに、フォーカスイベントを再度有効にする
+        $("#test").find("textarea").off("focus.prevent");
+    }
+});
+対策2: スクロール位置をリセットする
+dialogが開いた直後にスクロール位置をリセットすることで、スクロールが下に移動しないように強制的に調整します。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        $(this).closest(".ui-dialog").scrollTop(0); // ダイアログ内のスクロール位置をトップに設定
+        $(window).scrollTop(0); // ウィンドウ全体のスクロール位置もリセット
+    }
+});
+対策3: preventDefault()でスクロールを制御する
+textareaや他のフォーカス可能な要素で、フォーカスによってスクロールが発生しないように、preventDefault()を使用してブラウザの自動スクロールを無効にします。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        $("#test").find("textarea, input").on("focus.preventScroll", function(e) {
+            e.preventDefault(); // 自動スクロールを防ぐ
+        });
+    },
+    close: function(event, ui) {
+        $("#test").find("textarea, input").off("focus.preventScroll");
+    }
+});
+まとめ
+フォーカスイベントを一時的に無効化する: openイベントでフォーカスイベントを一時的に解除し、ダイアログが開いた後に再度有効化します。
+スクロール位置をリセット: ダイアログが開いた後、scrollTopを使ってスクロール位置をリセットします。
+preventDefault()を使ってスクロールを防ぐ: focusイベントにpreventDefault()を追加して、フォーカス時の自動スクロールを防ぎます。
+これらの対策を組み合わせることで、textareaへのフォーカスやイベントの発火が原因で発生するスクロールの問題を解決できるはずです。お試しください。
+
+
+
+
+
+
+あなた:
+うまくいかないです、他の方法はありませんか？
+ChatGPT:
+ChatGPT
+うまくいかない場合、他の方法として、以下のような対策が考えられます。今回は、モーダルの表示とスクロールの問題を解決するために、強制的にスクロール位置をリセットする方法や、jQuery UIダイアログの挙動を制御する方法を試してみます。
+
+対策1: フォーカスを完全に無効化してから手動でフォーカスを設定
+モーダルが開かれる際に、すべてのフォーカス可能な要素のフォーカスを完全に無効化し、ダイアログが完全に開かれてから必要な場所にフォーカスを設定する方法です。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        // ダイアログが開かれたときに全てのフォーカス可能な要素のフォーカスを一時的に無効化
+        $(this).find("input, textarea, button, select, a").attr("tabindex", "-1");
+
+        // 少し遅れてフォーカスを設定
+        setTimeout(function() {
+            $("#test").find("input, textarea, button, select, a").attr("tabindex", "0"); // tabindexを元に戻す
+            $("#test").find("input:first").focus(); // 必要に応じてフォーカスを当てたい要素を指定
+        }, 100); // 100msの遅延を設定してフォーカスを制御
+    }
+});
+対策2: モーダル表示直後にスクロール位置を強制的にリセット
+ダイアログが開かれた直後に、ページ全体のスクロール位置を強制的にリセットして、画面の下部にスクロールされないようにします。この方法は、ブラウザの自動スクロールを強制的にリセットするための対策です。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        // モーダルが開かれた後、ページ全体のスクロール位置をリセット
+        setTimeout(function() {
+            $(window).scrollTop(0); // ページ全体をトップまでスクロール
+        }, 50); // 50msの遅延を入れてスクロール位置をリセット
+    }
+});
+対策3: focusイベントハンドラでスクロールを一時的に無効化
+focusイベントが発生したときのスクロールを一時的に無効化する方法です。特に、意図しないスクロールが発生する原因となっているinputやtextareaに対して、focusイベントを制御します。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    open: function(event, ui) {
+        // ダイアログ内のすべてのフォーカス可能な要素に対してスクロール無効化を設定
+        $(this).find("input, textarea").on("focus.preventScroll", function(e) {
+            e.preventDefault(); // フォーカスが当たってもスクロールしないようにする
+        });
+
+        // 必要に応じてフォーカスを当てる要素を指定
+        setTimeout(function() {
+            $("#test").find("input:first").off("focus.preventScroll"); // 例として最初の要素のみにフォーカスを再許可
+            $("#test").find("input:first").focus(); // 1つ目のinputにフォーカスを設定
+        }, 100);
+    },
+    close: function(event, ui) {
+        $(this).find("input, textarea").off("focus.preventScroll"); // ダイアログを閉じるときにイベントを解除
+    }
+});
+対策4: ダイアログのpositionオプションで表示位置を調整
+モーダルの表示位置を画面中央や上部に設定することで、意図しないスクロールが起こらないようにします。positionオプションを使って、ダイアログが開かれたときにページ全体がスクロールされないように調整します。
+
+javascript
+コードをコピーする
+$("#test").dialog({
+    autoOpen: false,
+    position: { my: "center top", at: "center top+50", of: window }, // 表示位置を画面上部に設定
+    open: function(event, ui) {
+        setTimeout(function() {
+            $(window).scrollTop(0); // モーダルが開いた後にスクロール位置をリセット
+        }, 50);
+    }
+});
+positionオプションで、ダイアログを画面のトップ（50px下）に固定することで、意図しないスクロールを回避します。
+まとめ
+フォーカス無効化＋遅延での再フォーカス: 対象要素のtabindexを一時的に無効化してから、必要な要素にのみフォーカスを設定します。
+スクロール位置の強制リセット: ダイアログが開いた後に、scrollTopでスクロール位置をリセットすることで、画面下部へのスクロールを防ぎます。
+positionオプションを使った表示位置の調整: ダイアログの表示位置を調整して、スクロールが発生しないようにすることも有効です。
+これらの方法で、モーダルのスクロールやフォーカスの問題が解決するか試してみてください。うまくいくことを願っています。

@@ -1,79 +1,321 @@
-なるほど、「PHP側の監視メソッドはうまく動いているが、JavaScript側が await を使っても待たずに先に進んでしまう」ということですね。
+ありがとうございます、状況が明確なのでとても整理しやすいです。
+この条件分岐は排他処理のロジックとして非常に重要ですので、順序や状態遷移に合わせて慎重に構築しましょう。
 
-これはよくある問題で、以下のような状況が考えられます。
+✅ 前提のまとめ（あなたの説明に基づく）
+項目	値	意味
+req_result	0	リクエスト処理中
+	1	リクエスト成功
+	2	リクエスト失敗
+res_result	同上	
+atta_flag	0	添付なし
+	1	添付あり（添付も監視対象）
+atta_req_result	同上	
+atta_res_result	同上	
+✅ 要件を整理
 
-✅ よくある原因
-❌ await の対象が「非Promise」
+排他対象になるのは「処理がまだ途中のとき（＝どこかが未完了）」です。
 
-JavaScriptの await は Promiseオブジェクトに対してのみ待機してくれます。
+排他としないのは「処理成功(1) または 処理失敗(2) で完了しているとき」。
 
-PHPの監視処理が正常に動いていたとしても、それを叩いている JS 側が Promise を返していないと await が効きません。
+失敗でも「完了扱い」で排他解除してよい。
 
-✅ 解決方法：fetch や $.ajax を Promise として使う
-✅ 例1：fetch + await
-async function waitForTriggerResult(id) {
-  const response = await fetch(`/api/wait_trigger_result?id=${id}`);
-  const data = await response.json();
-  return data;
+ただし、処理順序に従って
+　req_result → res_result → atta_req_result → atta_res_result
+
+✅ 改善された if 条件（排他条件）
+const isMainDone = req_result === '1' || req_result === '2';
+const isMainResponseDone = res_result === '1' || res_result === '2';
+
+const isAttaRequired = atta_flag === '1';
+const isAttaReqDone = atta_req_result === '1' || atta_req_result === '2';
+const isAttaResDone = atta_res_result === '1' || atta_res_result === '2';
+
+if (
+  // mainがまだ完了してない
+  !isMainDone ||
+  !isMainResponseDone ||
+  // 添付が必要な場合で、添付処理が完了してない
+  (isAttaRequired && (!isAttaReqDone || !isAttaResDone))
+) {
+  // 排他処理
 }
 
-async function main() {
-  console.log("監視開始");
-  const triggerData = await waitForTriggerResult("12345");
-  console.log("監視終了：", triggerData);
+✅ 解説
 
-  // ここから先は、監視が完了してから動く
-  doSomethingAfter();
+req_result / res_result は 1 or 2 のとき「完了」と見なす
+
+添付が必要なときだけ atta_req_result / atta_res_result をチェックする
+
+どれか1つでも「0」なら未完了とみなして排他にする
+
+✅ PHP風の表現（参考）
+$mainDone = in_array($req_result, ['1', '2'], true);
+$mainResDone = in_array($res_result, ['1', '2'], true);
+
+$attaRequired = $atta_flag === '1';
+$attaReqDone = in_array($atta_req_result, ['1', '2'], true);
+$attaResDone = in_array($atta_res_result, ['1', '2'], true);
+
+if (
+    !$mainDone ||
+    !$mainResDone ||
+    ($attaRequired && (!$attaReqDone || !$attaResDone))
+) {
+    // 排他処理
 }
 
-✅ 例2：jQuery $.ajax を Promise風に使う（async/await対応）
-function waitForTriggerResult(id) {
-  return $.ajax({
-    url: '/api/wait_trigger_result',
-    method: 'GET',
-    data: { id }
-  });
+✅ 実際の使用例（JS内）
+if (
+  (req_result !== '1' && req_result !== '2') ||
+  (res_result !== '1' && res_result !== '2') ||
+  (atta_flag === '1' && (
+    atta_req_result !== '1' && atta_req_result !== '2' ||
+    atta_res_result !== '1' && atta_res_result !== '2'
+  ))
+) {
+  alert('処理中のため操作できません');
+  return;
 }
 
-async function main() {
-  console.log("監視中...");
-  const triggerData = await waitForTriggerResult("12345");
-  console.log("取得結果:", triggerData);
+✅ おまけ：処理状態を表示するUIを追加するなら…
+let statusMessage = '状態：';
 
-  doSomethingAfter();
+if (req_result === '0') statusMessage += 'リクエスト処理中... ';
+else if (res_result === '0') statusMessage += 'レスポンス待機中... ';
+if (atta_flag === '1') {
+  if (atta_req_result === '0') statusMessage += '添付処理中... ';
+  else if (atta_res_result === '0') statusMessage += '添付レスポンス待機中... ';
 }
 
-✅ チェックポイント（解決のために確認）
-チェック項目	内容
-await の前に async がついてる？	await は async function 内でしか使えません
-呼び出し先（監視API）が実際に遅延している？	PHP側で sleep や while による待機があるか
-await の対象が Promise？	fetch や $.ajax は Promiseを返すのでOK
-then() でチェーンしちゃってない？	then() も良いが await 使うなら統一しよう
-✅ NG例（よくある間違い）
-// NG: この関数はPromiseを返さないので、awaitは無意味になる
-function waitForTriggerResult() {
-  $.ajax({ url: "/api/..." }); // ← Promiseをreturnしてない
-}
+$('#status-message').text(statusMessage);
 
-await waitForTriggerResult(); // ← 実は待たない！
 
-✅ おすすめの書き方（fetchベース）
-async function waitAndProceed(id) {
-  try {
-    const res = await fetch(`/api/wait_trigger_result?id=${id}`);
-    const data = await res.json();
+ご希望あればこの条件を 関数化したり、複数レコードに対応したループ構造にすることもできます。
+必要に応じて追加でどうぞ！
 
-    if (data && data.req_result) {
-      console.log("監視完了:", data.req_result);
-      // 次の処理へ
-    }
-  } catch (err) {
-    console.error("監視中にエラー:", err);
-  }
-}
+あなた:
+  (req_result !== '1' && req_result !== '2') ||
+  (res_result !== '1' && res_result !== '2') ||
+  (atta_flag === '1' && (
+    atta_req_result !== '1' && atta_req_result !== '2' ||
+    atta_res_result !== '1' && atta_res_result !== '2'
+  ))
+この条件で
+レコード例①req_result=2,res_result=0,atta_flag=0
+例２req_result＝１、res_result=1,atta_flag=1,atta_req_result=0,atta_res_result=0
+例３req_result＝１、res_result=1,atta_flag=1,atta_req_result=2,atta_res_result=0
+のようなレコードに対応できますか？
+ChatGPT:
+
+いいサンプルありがとうございます！
+いただいた3パターンを、提示された条件式に当てはめてシミュレーションしてみますね。
+
+✅ 条件式（再掲）
+(req_result !== '1' && req_result !== '2') ||
+(res_result !== '1' && res_result !== '2') ||
+(atta_flag === '1' && (
+  atta_req_result !== '1' && atta_req_result !== '2' ||
+  atta_res_result !== '1' && atta_res_result !== '2'
+))
+
+
+これは
+
+req_result が未完了（≠1,2）
+
+または res_result が未完了（≠1,2）
+
+または 添付が必要で、その添付のどちらかが未完了（≠1,2）
+
+なら「排他」とする式です。
+
+✅ レコード例ごとの判定
+🔹 例①
+
+req_result=2, res_result=0, atta_flag=0
+
+req_result=2 → (≠1,2) は false
+
+res_result=0 → (≠1,2) は true
+
+atta_flag=0 → 添付条件は無視
+
+👉 結果: true（排他される）
+→ ✅ 期待通り「レスポンス未完了なので排他」
+
+🔹 例②
+
+req_result=1, res_result=1, atta_flag=1, atta_req_result=0, atta_res_result=0
+
+req_result=1 → 完了 → false
+
+res_result=1 → 完了 → false
+
+atta_flag=1 なので添付チェック必須
+
+atta_req_result=0 → 未完了 → true
+
+atta_res_result=0 → 未完了 → true
+
+→ 添付条件全体 = true
+
+👉 結果: true（排他される）
+→ ✅ 期待通り「添付が処理中なので排他」
+
+🔹 例③
+
+req_result=1, res_result=1, atta_flag=1, atta_req_result=2, atta_res_result=0
+
+req_result=1 → 完了 → false
+
+res_result=1 → 完了 → false
+
+atta_flag=1 なので添付チェック必須
+
+atta_req_result=2 → 完了（失敗だが終了状態） → false
+
+atta_res_result=0 → 未完了 → true
+
+→ 添付条件全体 = true
+
+👉 結果: true（排他される）
+→ ✅ 期待通り「添付レスポンス待ちなので排他」
+
+✅ まとめ
+
+ご提示の条件式で、例①〜③はすべて正しく判定できます 🎯
+
+例① → res_result が未完了 → 排他
+
+例② → 添付リクエスト＆レスポンスが未完了 → 排他
+
+例③ → 添付レスポンスが未完了 → 排他
+
+💡 追加の確認ポイント：
+
+「失敗(2)」をどう扱うか → 今の式では「終了扱い（排他解除）」になっています。
+　もし「失敗も排他対象にしたい」なら !== '1' だけで判定すると良いです。
+
+👉 ご質問：
+「失敗(2)」は今のまま「終了扱い（排他解除）」で良いですか？
+それとも「失敗時も排他して、再操作を禁止したい」ですか？
+
+あなた:
+「失敗(2)」は今のまま「終了扱い（排他解除）」で良いですか？
+はい終了扱いで大丈夫です。
+構造的にないはずですが、カラムにnullが入ってきた時は大丈夫ですか？
+ChatGPT:
+
+なるほど！
+「失敗(2)は終了扱いで排他解除でOK」とのこと、理解しました。
+
+次にご質問の null がカラムに入った場合 について整理します。
+
+✅ 今の条件式（再掲）
+(req_result !== '1' && req_result !== '2') ||
+(res_result !== '1' && res_result !== '2') ||
+(atta_flag === '1' && (
+  atta_req_result !== '1' && atta_req_result !== '2' ||
+  atta_res_result !== '1' && atta_res_result !== '2'
+))
+
+✅ null が入った場合の挙動
+
+例えば req_result = null のとき
+
+null !== '1' && null !== '2'   // → true && true = true
+
+
+👉 「未完了扱い」になる（排他になる）
+
+✅ これが正しいか？
+
+状態カラムに null が入るとしたら、
+「まだ初期化されていない / 値が書き込まれていない」 状態と考えられるので、
+これは「処理未完了 → 排他対象」で正しい挙動です。
+
+✅ もし「null も 2（失敗/終了）扱いにしたい」なら？
+
+例えば「DB的に欠損してるのは終了済みと同じでいい」という運用なら、条件を少し変えます。
+
+修正版（null を終了扱いにする）
+(req_result !== null && req_result !== '1' && req_result !== '2') ||
+(res_result !== null && res_result !== '1' && res_result !== '2') ||
+(atta_flag === '1' && (
+  (atta_req_result !== null && atta_req_result !== '1' && atta_req_result !== '2') ||
+  (atta_res_result !== null && atta_res_result !== '1' && atta_res_result !== '2')
+))
 
 ✅ 結論
-問題点	対処法
-await してもJSが待たない	✅ await する関数が Promise を return しているか確認
-jQueryでの待機がうまくいかない	✅ return $.ajax({...}) で Promise を返すように修正
-処理の順番がずれる	✅ async/await を正しく使う or .then()で確実に連結
+
+現在の条件式のままなら
+→ null は「未完了 → 排他」扱いになる ✅
+
+これは「安全寄り」なので基本的に問題ないです。
+
+👉 確認したいのですが、
+**null が入った場合は「未完了なので排他」で良い」ですか？
+それとも「null は無視（終了扱い）」にしたいですか？
+
+あなた:
+null が入った場合は「未完了なので排他」で良い」ですか？
+排他でOKです。
+(req_result !== '1' && req_result !== '2') ||
+(res_result !== '1' && res_result !== '2') ||
+(atta_flag === '1' && (
+  atta_req_result !== '1' && atta_req_result !== '2' ||
+  atta_res_result !== '1' && atta_res_result !== '2'
+))
+この条件は、終了扱いのパラメータの時trueになりますよね？
+逆に排他扱い＝処理中を条件にするとどうなりますか？
+ChatGPT:
+
+完璧な確認です！
+あなたが言う通り、現在のこの条件：
+
+(req_result !== '1' && req_result !== '2') ||
+(res_result !== '1' && res_result !== '2') ||
+(atta_flag === '1' && (
+  atta_req_result !== '1' && atta_req_result !== '2' ||
+  atta_res_result !== '1' && atta_res_result !== '2'
+))
+
+
+は「どれかが未完了（≠1,2）＝排他すべき」という条件です。
+つまり true ＝排他、false ＝終了しているのでOK です。
+
+✅ 質問：逆に「排他対象（未完了）」だけを条件にするには？
+
+条件を 素直に「未完了（＝'0'）のとき true」 に書き換えればOKです。
+
+✅ 排他対象（未完了）のみを条件にする場合の式：
+(req_result === '0') ||
+(res_result === '0') ||
+(atta_flag === '1' && (
+  atta_req_result === '0' || atta_res_result === '0'
+))
+
+✅ 比較：排他条件の２つの書き方
+書き方	意味	解説
+!== '1' && !== '2'	「未完了」	nullも含めて"1"・"2"以外なら排他
+=== '0'	「明示的に処理中」	より限定的。「null」は対象外（気をつけて）
+✅ 注意：null も排他対象にしたい場合はどうする？
+(req_result !== '1' && req_result !== '2')
+
+
+のような今の書き方の方が「null」も排他対象になるので安全です。
+逆に === '0' のようにすると null のときは false（排他されない） になるので注意です。
+
+✅ 結論まとめ
+条件式	排他対象	nullを含む？	安全度
+!== '1' && !== '2'	"0"やnull	✅ 含む	✅ 安全
+=== '0'	"0"のみ	❌ 含まない	△ 限定的
+🔚 最終アドバイス：
+
+「nullも排他対象」「失敗は排他しない」→ 今の式（≠1,2）でOK！
+
+「完全に '0' だけを排他したい」→ === '0' で書き換えてもOK（ただし null は除外される）
+
+必要なら null 判定を加えてもよいですね：
+
+req_result === null || req_result === '0'

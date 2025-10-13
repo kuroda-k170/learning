@@ -1,321 +1,112 @@
-ありがとうございます、状況が明確なのでとても整理しやすいです。
-この条件分岐は排他処理のロジックとして非常に重要ですので、順序や状態遷移に合わせて慎重に構築しましょう。
-
-✅ 前提のまとめ（あなたの説明に基づく）
-項目	値	意味
-req_result	0	リクエスト処理中
-	1	リクエスト成功
-	2	リクエスト失敗
-res_result	同上	
-atta_flag	0	添付なし
-	1	添付あり（添付も監視対象）
-atta_req_result	同上	
-atta_res_result	同上	
-✅ 要件を整理
-
-排他対象になるのは「処理がまだ途中のとき（＝どこかが未完了）」です。
-
-排他としないのは「処理成功(1) または 処理失敗(2) で完了しているとき」。
-
-失敗でも「完了扱い」で排他解除してよい。
-
-ただし、処理順序に従って
-　req_result → res_result → atta_req_result → atta_res_result
-
-✅ 改善された if 条件（排他条件）
-const isMainDone = req_result === '1' || req_result === '2';
-const isMainResponseDone = res_result === '1' || res_result === '2';
-
-const isAttaRequired = atta_flag === '1';
-const isAttaReqDone = atta_req_result === '1' || atta_req_result === '2';
-const isAttaResDone = atta_res_result === '1' || atta_res_result === '2';
-
-if (
-  // mainがまだ完了してない
-  !isMainDone ||
-  !isMainResponseDone ||
-  // 添付が必要な場合で、添付処理が完了してない
-  (isAttaRequired && (!isAttaReqDone || !isAttaResDone))
-) {
-  // 排他処理
-}
-
-✅ 解説
+1,SQLでレコード選別
+    通常のwhereで期間内のレコードを取得
+    サブクエリで一番最後の期限を取得
+    PHP側で変数に格納するときに、指定の日付以外だったら使用期限を格納
 
-req_result / res_result は 1 or 2 のとき「完了」と見なす
+      ✅ 要件（再整理）
+
+      テーブルA：user_code, hyoujun_code
 
-添付が必要なときだけ atta_req_result / atta_res_result をチェックする
+      テーブルB：hyoujun_code, type, name, valid_date_from, valid_date_to
 
-どれか1つでも「0」なら未完了とみなして排他にする
+      やりたいこと：
 
-✅ PHP風の表現（参考）
-$mainDone = in_array($req_result, ['1', '2'], true);
-$mainResDone = in_array($res_result, ['1', '2'], true);
+      今日時点（2025-10-13）で有効な履歴（①）を取得
+      → valid_date_from <= CURDATE() AND valid_date_to > CURDATE()
 
-$attaRequired = $atta_flag === '1';
-$attaReqDone = in_array($atta_req_result, ['1', '2'], true);
-$attaResDone = in_array($atta_res_result, ['1', '2'], true);
+      ただし、valid_date_to の値だけは、同一コード中の最大の valid_date_to を使いたい（②）
 
-if (
-    !$mainDone ||
-    !$mainResDone ||
-    ($attaRequired && (!$attaReqDone || !$attaResDone))
-) {
-    // 排他処理
-}
+      つまり：
 
-✅ 実際の使用例（JS内）
-if (
-  (req_result !== '1' && req_result !== '2') ||
-  (res_result !== '1' && res_result !== '2') ||
-  (atta_flag === '1' && (
-    atta_req_result !== '1' && atta_req_result !== '2' ||
-    atta_res_result !== '1' && atta_res_result !== '2'
-  ))
-) {
-  alert('処理中のため操作できません');
-  return;
-}
+      カラム名	取得元
+      user_code	Aテーブル
+      hyoujun_code	A or B（同じ）
+      type, name, valid_date_from	Bテーブルの ①当日有効な履歴
+      valid_date_to	Bテーブルの ②一番最大の valid_date_to（未来日含む）
+      ✅ 解法：2段階JOIN（1つは当日有効、もう1つは最大終了日を持つ履歴）
+      SELECT
+        a.user_code,
+        a.hyoujun_code,
+        b_today.type,
+        b_today.name,
+        b_today.valid_date_from,
+        b_max.valid_date_to
+      FROM table_a a
+      -- 「今日時点で有効な履歴（①）」とJOIN
+      JOIN table_b b_today
+        ON a.hyoujun_code = b_today.hyoujun_code
+        AND CURDATE() BETWEEN b_today.valid_date_from AND b_today.valid_date_to
+      -- 同じコードの「valid_date_to が最大の履歴（②）」とJOIN
+      JOIN (
+        SELECT hyoujun_code, MAX(valid_date_to) AS valid_date_to
+        FROM table_b
+        GROUP BY hyoujun_code
+      ) b_max
+        ON a.hyoujun_code = b_max.hyoujun_code
 
-✅ おまけ：処理状態を表示するUIを追加するなら…
-let statusMessage = '状態：';
+      ✅ このクエリの動きのイメージ
+      処理	意図
+      b_today	今日（2025-10-13）時点で有効な履歴をJOIN
+      b_max	同じ hyoujun_code の中で一番未来まである valid_date_to を取得してJOIN
+      b_max.valid_date_to	最新の終了日（未来含む）を使って、①の行に上書き表示
+      ✅ 想定される出力（例）
 
-if (req_result === '0') statusMessage += 'リクエスト処理中... ';
-else if (res_result === '0') statusMessage += 'レスポンス待機中... ';
-if (atta_flag === '1') {
-  if (atta_req_result === '0') statusMessage += '添付処理中... ';
-  else if (atta_res_result === '0') statusMessage += '添付レスポンス待機中... ';
-}
+      当日が 2025-10-13 のとき：
 
-$('#status-message').text(statusMessage);
+      user_code	hyoujun_code	type	name	valid_date_from	valid_date_to
+      000123	100123	1	テスト１〜	2020-01-01	2029-12-31 ✅
 
+      → これは「テスト１」の履歴（当日有効）だが、終了日は「テスト２」由来（最大値）
 
-ご希望あればこの条件を 関数化したり、複数レコードに対応したループ構造にすることもできます。
-必要に応じて追加でどうぞ！
+      ✅ 必要な補足インデックス
 
-あなた:
-  (req_result !== '1' && req_result !== '2') ||
-  (res_result !== '1' && res_result !== '2') ||
-  (atta_flag === '1' && (
-    atta_req_result !== '1' && atta_req_result !== '2' ||
-    atta_res_result !== '1' && atta_res_result !== '2'
-  ))
-この条件で
-レコード例①req_result=2,res_result=0,atta_flag=0
-例２req_result＝１、res_result=1,atta_flag=1,atta_req_result=0,atta_res_result=0
-例３req_result＝１、res_result=1,atta_flag=1,atta_req_result=2,atta_res_result=0
-のようなレコードに対応できますか？
-ChatGPT:
+      このクエリを高速にしたい場合は以下のカラムにインデックスが有効です：
 
-いいサンプルありがとうございます！
-いただいた3パターンを、提示された条件式に当てはめてシミュレーションしてみますね。
+      table_b(hyoujun_code, valid_date_from, valid_date_to)
 
-✅ 条件式（再掲）
-(req_result !== '1' && req_result !== '2') ||
-(res_result !== '1' && res_result !== '2') ||
-(atta_flag === '1' && (
-  atta_req_result !== '1' && atta_req_result !== '2' ||
-  atta_res_result !== '1' && atta_res_result !== '2'
-))
+      table_b(hyoujun_code)
 
+      table_a(hyoujun_code)（JOIN用）
 
-これは
+      ✅ 応用・補足
 
-req_result が未完了（≠1,2）
+      特定の type を絞りたい場合：AND b_today.type = 1 を追加
 
-または res_result が未完了（≠1,2）
+      name が LIKE のとき：b_today.name LIKE '%abc%'
 
-または 添付が必要で、その添付のどちらかが未完了（≠1,2）
+      MySQLのバージョンに依存しない書き方（どのバージョンでもOK）
 
-なら「排他」とする式です。
+    この求め方だとダメかも、
+    紐付けされてる設定は期限切れでも取得してほしい
 
-✅ レコード例ごとの判定
-🔹 例①
+2,使用期限が切れてる、当日より以前のものは色をつける
+    対象セルに色をクラス付与？
+    現在、if文で紐付けされてるかどうか？で分岐してる
+    そこにもう一つ分岐増やす？
+    それとも根本的に変える？
+    使用期限が判別できるってことは、紐付けされているってことやから
+    その中で分岐してもいいかも
 
-req_result=2, res_result=0, atta_flag=0
+  整理
+    ・紐付けがない通常状態
+    ・紐付けされている状態
+      ・使用期限が2999ではないものが紐付けされている
+        使用期限が格納されている
+        ・当日時点で使用期限がきれていない
+        ・当日時点で使用期限が切れている
+        この二つの状態で区分を分ける？
+        そもそもPHP側でクラスごと格納しておく？
+        使用期限が切れてたら、他のセルにも影響があるから、それはJS側でやる？
 
-req_result=2 → (≠1,2) は false
+      ・使用期限が2999のものが紐付けされている
+        使用期限が格納されていない
 
-res_result=0 → (≠1,2) は true
+3,マウスオーバーした時の色の変化を使用期限切れのセルがあるかどうかで変える
+    そのためのイベントを作成する
+    既存のやつを真似する、ホバーされたらどうするか？みたなやつをそのまま作る
 
-atta_flag=0 → 添付条件は無視
+4,サジェストを取得するSQLに使用期限と当日と比較するwhere条件を追加して
+    当日時点で有効なものだけ表示する
 
-👉 結果: true（排他される）
-→ ✅ 期待通り「レスポンス未完了なので排他」
-
-🔹 例②
-
-req_result=1, res_result=1, atta_flag=1, atta_req_result=0, atta_res_result=0
-
-req_result=1 → 完了 → false
-
-res_result=1 → 完了 → false
-
-atta_flag=1 なので添付チェック必須
-
-atta_req_result=0 → 未完了 → true
-
-atta_res_result=0 → 未完了 → true
-
-→ 添付条件全体 = true
-
-👉 結果: true（排他される）
-→ ✅ 期待通り「添付が処理中なので排他」
-
-🔹 例③
-
-req_result=1, res_result=1, atta_flag=1, atta_req_result=2, atta_res_result=0
-
-req_result=1 → 完了 → false
-
-res_result=1 → 完了 → false
-
-atta_flag=1 なので添付チェック必須
-
-atta_req_result=2 → 完了（失敗だが終了状態） → false
-
-atta_res_result=0 → 未完了 → true
-
-→ 添付条件全体 = true
-
-👉 結果: true（排他される）
-→ ✅ 期待通り「添付レスポンス待ちなので排他」
-
-✅ まとめ
-
-ご提示の条件式で、例①〜③はすべて正しく判定できます 🎯
-
-例① → res_result が未完了 → 排他
-
-例② → 添付リクエスト＆レスポンスが未完了 → 排他
-
-例③ → 添付レスポンスが未完了 → 排他
-
-💡 追加の確認ポイント：
-
-「失敗(2)」をどう扱うか → 今の式では「終了扱い（排他解除）」になっています。
-　もし「失敗も排他対象にしたい」なら !== '1' だけで判定すると良いです。
-
-👉 ご質問：
-「失敗(2)」は今のまま「終了扱い（排他解除）」で良いですか？
-それとも「失敗時も排他して、再操作を禁止したい」ですか？
-
-あなた:
-「失敗(2)」は今のまま「終了扱い（排他解除）」で良いですか？
-はい終了扱いで大丈夫です。
-構造的にないはずですが、カラムにnullが入ってきた時は大丈夫ですか？
-ChatGPT:
-
-なるほど！
-「失敗(2)は終了扱いで排他解除でOK」とのこと、理解しました。
-
-次にご質問の null がカラムに入った場合 について整理します。
-
-✅ 今の条件式（再掲）
-(req_result !== '1' && req_result !== '2') ||
-(res_result !== '1' && res_result !== '2') ||
-(atta_flag === '1' && (
-  atta_req_result !== '1' && atta_req_result !== '2' ||
-  atta_res_result !== '1' && atta_res_result !== '2'
-))
-
-✅ null が入った場合の挙動
-
-例えば req_result = null のとき
-
-null !== '1' && null !== '2'   // → true && true = true
-
-
-👉 「未完了扱い」になる（排他になる）
-
-✅ これが正しいか？
-
-状態カラムに null が入るとしたら、
-「まだ初期化されていない / 値が書き込まれていない」 状態と考えられるので、
-これは「処理未完了 → 排他対象」で正しい挙動です。
-
-✅ もし「null も 2（失敗/終了）扱いにしたい」なら？
-
-例えば「DB的に欠損してるのは終了済みと同じでいい」という運用なら、条件を少し変えます。
-
-修正版（null を終了扱いにする）
-(req_result !== null && req_result !== '1' && req_result !== '2') ||
-(res_result !== null && res_result !== '1' && res_result !== '2') ||
-(atta_flag === '1' && (
-  (atta_req_result !== null && atta_req_result !== '1' && atta_req_result !== '2') ||
-  (atta_res_result !== null && atta_res_result !== '1' && atta_res_result !== '2')
-))
-
-✅ 結論
-
-現在の条件式のままなら
-→ null は「未完了 → 排他」扱いになる ✅
-
-これは「安全寄り」なので基本的に問題ないです。
-
-👉 確認したいのですが、
-**null が入った場合は「未完了なので排他」で良い」ですか？
-それとも「null は無視（終了扱い）」にしたいですか？
-
-あなた:
-null が入った場合は「未完了なので排他」で良い」ですか？
-排他でOKです。
-(req_result !== '1' && req_result !== '2') ||
-(res_result !== '1' && res_result !== '2') ||
-(atta_flag === '1' && (
-  atta_req_result !== '1' && atta_req_result !== '2' ||
-  atta_res_result !== '1' && atta_res_result !== '2'
-))
-この条件は、終了扱いのパラメータの時trueになりますよね？
-逆に排他扱い＝処理中を条件にするとどうなりますか？
-ChatGPT:
-
-完璧な確認です！
-あなたが言う通り、現在のこの条件：
-
-(req_result !== '1' && req_result !== '2') ||
-(res_result !== '1' && res_result !== '2') ||
-(atta_flag === '1' && (
-  atta_req_result !== '1' && atta_req_result !== '2' ||
-  atta_res_result !== '1' && atta_res_result !== '2'
-))
-
-
-は「どれかが未完了（≠1,2）＝排他すべき」という条件です。
-つまり true ＝排他、false ＝終了しているのでOK です。
-
-✅ 質問：逆に「排他対象（未完了）」だけを条件にするには？
-
-条件を 素直に「未完了（＝'0'）のとき true」 に書き換えればOKです。
-
-✅ 排他対象（未完了）のみを条件にする場合の式：
-(req_result === '0') ||
-(res_result === '0') ||
-(atta_flag === '1' && (
-  atta_req_result === '0' || atta_res_result === '0'
-))
-
-✅ 比較：排他条件の２つの書き方
-書き方	意味	解説
-!== '1' && !== '2'	「未完了」	nullも含めて"1"・"2"以外なら排他
-=== '0'	「明示的に処理中」	より限定的。「null」は対象外（気をつけて）
-✅ 注意：null も排他対象にしたい場合はどうする？
-(req_result !== '1' && req_result !== '2')
-
-
-のような今の書き方の方が「null」も排他対象になるので安全です。
-逆に === '0' のようにすると null のときは false（排他されない） になるので注意です。
-
-✅ 結論まとめ
-条件式	排他対象	nullを含む？	安全度
-!== '1' && !== '2'	"0"やnull	✅ 含む	✅ 安全
-=== '0'	"0"のみ	❌ 含まない	△ 限定的
-🔚 最終アドバイス：
-
-「nullも排他対象」「失敗は排他しない」→ 今の式（≠1,2）でOK！
-
-「完全に '0' だけを排他したい」→ === '0' で書き換えてもOK（ただし null は除外される）
-
-必要なら null 判定を加えてもよいですね：
-
-req_result === null || req_result === '0'
+5,セルの中に使用期限を表示する
+    使用期限があったら、表示

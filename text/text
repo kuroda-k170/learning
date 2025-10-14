@@ -1,112 +1,67 @@
-1,SQLでレコード選別
-    通常のwhereで期間内のレコードを取得
-    サブクエリで一番最後の期限を取得
-    PHP側で変数に格納するときに、指定の日付以外だったら使用期限を格納
+✅ 改めて仕様のまとめ（最新）
 
-      ✅ 要件（再整理）
+「ユーザー設定されたコード（Aテーブル）に対し、詳細情報（Bテーブル）を取得する」際の条件は以下の通りです：
 
-      テーブルA：user_code, hyoujun_code
+🎯 優先順位
 
-      テーブルB：hyoujun_code, type, name, valid_date_from, valid_date_to
+当日（CURDATE()）時点で有効な履歴（valid_date_from ≦ today ≦ valid_date_to）
 
-      やりたいこと：
+有効な履歴がなければ、有効期限切れの履歴のうち、最新のもの（valid_date_to が最大）
 
-      今日時点（2025-10-13）で有効な履歴（①）を取得
-      → valid_date_from <= CURDATE() AND valid_date_to > CURDATE()
+✅ アプローチ
 
-      ただし、valid_date_to の値だけは、同一コード中の最大の valid_date_to を使いたい（②）
+これは SQL だけで1本に書くことは可能です。
+以下のような ROW_NUMBER()＋CASE WHEN を使ったランキング付きサブクエリ を使うと、
+「条件に合うレコードに優先順位をつけて、最も優先度が高いものだけを取る」ことができます。
 
-      つまり：
+✅ 解決策SQL（MySQL 8.0以上）
+SELECT *
+FROM (
+  SELECT 
+    a.user_code,
+    a.hyoujun_code,
+    b.name,
+    b.valid_date_from,
+    b.valid_date_to,
+    -- 優先度: 有効中 = 1、期限切れ = 2、それ以外は除外
+    ROW_NUMBER() OVER (
+      PARTITION BY a.hyoujun_code
+      ORDER BY 
+        CASE 
+          WHEN CURDATE() BETWEEN b.valid_date_from AND b.valid_date_to THEN 1
+          WHEN b.valid_date_to < CURDATE() THEN 2
+          ELSE 3 -- ← 未来開始レコード（対象外）など
+        END,
+        b.valid_date_from DESC  -- 同順位の中で最も新しい履歴を取得
+    ) AS rn
+  FROM table_a a
+  JOIN table_b b ON a.hyoujun_code = b.hyoujun_code
+  WHERE b.valid_date_from <= CURDATE()
+) ranked
+WHERE ranked.rn = 1
 
-      カラム名	取得元
-      user_code	Aテーブル
-      hyoujun_code	A or B（同じ）
-      type, name, valid_date_from	Bテーブルの ①当日有効な履歴
-      valid_date_to	Bテーブルの ②一番最大の valid_date_to（未来日含む）
-      ✅ 解法：2段階JOIN（1つは当日有効、もう1つは最大終了日を持つ履歴）
-      SELECT
-        a.user_code,
-        a.hyoujun_code,
-        b_today.type,
-        b_today.name,
-        b_today.valid_date_from,
-        b_max.valid_date_to
-      FROM table_a a
-      -- 「今日時点で有効な履歴（①）」とJOIN
-      JOIN table_b b_today
-        ON a.hyoujun_code = b_today.hyoujun_code
-        AND CURDATE() BETWEEN b_today.valid_date_from AND b_today.valid_date_to
-      -- 同じコードの「valid_date_to が最大の履歴（②）」とJOIN
-      JOIN (
-        SELECT hyoujun_code, MAX(valid_date_to) AS valid_date_to
-        FROM table_b
-        GROUP BY hyoujun_code
-      ) b_max
-        ON a.hyoujun_code = b_max.hyoujun_code
+✅ ポイント解説
+部分	内容
+ROW_NUMBER()	各 hyoujun_code ごとに「優先度 + 日付」で順位をつける
+CASE WHEN	今日有効 → 1、期限切れ → 2、未来開始や無効は 3
+WHERE ranked.rn = 1	最も優先度が高い1件だけを取得（有効中優先・なければ期限切れ）
+valid_date_from <= CURDATE()	未来開始のレコードは除外（※必要に応じて外せます）
+✅ 例：履歴が2つあるときの挙動（2025-10-13）
+hyoujun_code	name	valid_date_from	valid_date_to	評価
+100123	テスト１〜	2020-01-01	2025-10-10	❌期限切れ（優先2）
+100123	テスト２〜	2025-10-13	2029-12-31	✅有効中（優先1）
 
-      ✅ このクエリの動きのイメージ
-      処理	意図
-      b_today	今日（2025-10-13）時点で有効な履歴をJOIN
-      b_max	同じ hyoujun_code の中で一番未来まである valid_date_to を取得してJOIN
-      b_max.valid_date_to	最新の終了日（未来含む）を使って、①の行に上書き表示
-      ✅ 想定される出力（例）
+→ テスト２〜 が取得される
 
-      当日が 2025-10-13 のとき：
+有効中がない場合
+hyoujun_code	name	valid_date_from	valid_date_to	評価
+100123	テスト１〜	2020-01-01	2025-10-10	✅期限切れ（優先2）
+100123	テスト２〜	2025-11-01	2029-12-31	❌未来（除外）
 
-      user_code	hyoujun_code	type	name	valid_date_from	valid_date_to
-      000123	100123	1	テスト１〜	2020-01-01	2029-12-31 ✅
+→ テスト１〜 が取得される（期限切れだけど取得OK）
 
-      → これは「テスト１」の履歴（当日有効）だが、終了日は「テスト２」由来（最大値）
+✅ 条件補足（さらに厳密にするなら）
 
-      ✅ 必要な補足インデックス
+WHERE b.valid_date_from <= CURDATE() を入れることで未来開始の履歴を除外していますが、
 
-      このクエリを高速にしたい場合は以下のカラムにインデックスが有効です：
-
-      table_b(hyoujun_code, valid_date_from, valid_date_to)
-
-      table_b(hyoujun_code)
-
-      table_a(hyoujun_code)（JOIN用）
-
-      ✅ 応用・補足
-
-      特定の type を絞りたい場合：AND b_today.type = 1 を追加
-
-      name が LIKE のとき：b_today.name LIKE '%abc%'
-
-      MySQLのバージョンに依存しない書き方（どのバージョンでもOK）
-
-    この求め方だとダメかも、
-    紐付けされてる設定は期限切れでも取得してほしい
-
-2,使用期限が切れてる、当日より以前のものは色をつける
-    対象セルに色をクラス付与？
-    現在、if文で紐付けされてるかどうか？で分岐してる
-    そこにもう一つ分岐増やす？
-    それとも根本的に変える？
-    使用期限が判別できるってことは、紐付けされているってことやから
-    その中で分岐してもいいかも
-
-  整理
-    ・紐付けがない通常状態
-    ・紐付けされている状態
-      ・使用期限が2999ではないものが紐付けされている
-        使用期限が格納されている
-        ・当日時点で使用期限がきれていない
-        ・当日時点で使用期限が切れている
-        この二つの状態で区分を分ける？
-        そもそもPHP側でクラスごと格納しておく？
-        使用期限が切れてたら、他のセルにも影響があるから、それはJS側でやる？
-
-      ・使用期限が2999のものが紐付けされている
-        使用期限が格納されていない
-
-3,マウスオーバーした時の色の変化を使用期限切れのセルがあるかどうかで変える
-    そのためのイベントを作成する
-    既存のやつを真似する、ホバーされたらどうするか？みたなやつをそのまま作る
-
-4,サジェストを取得するSQLに使用期限と当日と比較するwhere条件を追加して
-    当日時点で有効なものだけ表示する
-
-5,セルの中に使用期限を表示する
-    使用期限があったら、表示
+未来のレコードも候補に入れたいなら、この WHERE を削除すればOKです。

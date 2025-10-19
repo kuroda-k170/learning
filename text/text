@@ -1,67 +1,50 @@
-✅ 改めて仕様のまとめ（最新）
+✅ 短く簡潔にした版：
+LEFT JOIN table_b b_expired
+  ON b_expired.hyoujun_code = a.hyoujun_code
+  AND b_expired.valid_date_to = (
+    SELECT MAX(valid_date_to)
+    FROM table_b
+    WHERE hyoujun_code = a.hyoujun_code
+      AND valid_date_to < CURDATE()
+  )
 
-「ユーザー設定されたコード（Aテーブル）に対し、詳細情報（Bテーブル）を取得する」際の条件は以下の通りです：
+✅ 解説（短くできた理由）
 
-🎯 優先順位
+サブクエリの INNER JOIN を スカラーサブクエリ（副問い合わせ）に置き換えました。
 
-当日（CURDATE()）時点で有効な履歴（valid_date_from ≦ today ≦ valid_date_to）
+ON 句内に SELECT MAX(valid_date_to) を直接書くことで、1回の LEFT JOIN で済むようにしています。
 
-有効な履歴がなければ、有効期限切れの履歴のうち、最新のもの（valid_date_to が最大）
+この方法は MySQL 8.0 以降 ではパフォーマンス的にも十分で、構文的にも安全です。
 
-✅ アプローチ
+⚠ 注意点
+項目	説明
+✅ 見た目	非常に短く・読みやすくなる
+✅ 動作	hyoujun_code ごとに期限切れの最新レコード1件だけ JOIN される
+⚠ パフォーマンス	table_b が大規模な場合、サブクエリが頻繁に実行されるためインデックスが必須（hyoujun_code, valid_date_to）
+⚠ MySQLバージョン	一部の古いMySQLでは相関サブクエリを JOIN ON に使うのが最適化されにくい場合もある
+✅ さらに条件を加える場合
+AND b_expired.type = 1
 
-これは SQL だけで1本に書くことは可能です。
-以下のような ROW_NUMBER()＋CASE WHEN を使ったランキング付きサブクエリ を使うと、
-「条件に合うレコードに優先順位をつけて、最も優先度が高いものだけを取る」ことができます。
 
-✅ 解決策SQL（MySQL 8.0以上）
-SELECT *
-FROM (
-  SELECT 
-    a.user_code,
-    a.hyoujun_code,
-    b.name,
-    b.valid_date_from,
-    b.valid_date_to,
-    -- 優先度: 有効中 = 1、期限切れ = 2、それ以外は除外
-    ROW_NUMBER() OVER (
-      PARTITION BY a.hyoujun_code
-      ORDER BY 
-        CASE 
-          WHEN CURDATE() BETWEEN b.valid_date_from AND b.valid_date_to THEN 1
-          WHEN b.valid_date_to < CURDATE() THEN 2
-          ELSE 3 -- ← 未来開始レコード（対象外）など
-        END,
-        b.valid_date_from DESC  -- 同順位の中で最も新しい履歴を取得
-    ) AS rn
-  FROM table_a a
-  JOIN table_b b ON a.hyoujun_code = b.hyoujun_code
-  WHERE b.valid_date_from <= CURDATE()
-) ranked
-WHERE ranked.rn = 1
+などの条件も ON の末尾に追加可能です。
 
-✅ ポイント解説
-部分	内容
-ROW_NUMBER()	各 hyoujun_code ごとに「優先度 + 日付」で順位をつける
-CASE WHEN	今日有効 → 1、期限切れ → 2、未来開始や無効は 3
-WHERE ranked.rn = 1	最も優先度が高い1件だけを取得（有効中優先・なければ期限切れ）
-valid_date_from <= CURDATE()	未来開始のレコードは除外（※必要に応じて外せます）
-✅ 例：履歴が2つあるときの挙動（2025-10-13）
-hyoujun_code	name	valid_date_from	valid_date_to	評価
-100123	テスト１〜	2020-01-01	2025-10-10	❌期限切れ（優先2）
-100123	テスト２〜	2025-10-13	2029-12-31	✅有効中（優先1）
-
-→ テスト２〜 が取得される
-
-有効中がない場合
-hyoujun_code	name	valid_date_from	valid_date_to	評価
-100123	テスト１〜	2020-01-01	2025-10-10	✅期限切れ（優先2）
-100123	テスト２〜	2025-11-01	2029-12-31	❌未来（除外）
-
-→ テスト１〜 が取得される（期限切れだけど取得OK）
-
-✅ 条件補足（さらに厳密にするなら）
-
-WHERE b.valid_date_from <= CURDATE() を入れることで未来開始の履歴を除外していますが、
-
-未来のレコードも候補に入れたいなら、この WHERE を削除すればOKです。
+✅ 最終形サンプル
+SELECT
+  a.user_code,
+  a.hyoujun_code,
+  COALESCE(b_valid.name, b_expired.name) AS name,
+  COALESCE(b_valid.valid_date_from, b_expired.valid_date_from) AS valid_date_from,
+  COALESCE(b_valid.valid_date_to, b_expired.valid_date_to) AS valid_date_to
+FROM table_a a
+LEFT JOIN table_b b_valid
+  ON a.hyoujun_code = b_valid.hyoujun_code
+  AND CURDATE() BETWEEN b_valid.valid_date_from AND b_valid.valid_date_to
+LEFT JOIN table_b b_expired
+  ON b_expired.hyoujun_code = a.hyoujun_code
+  AND b_expired.valid_date_to = (
+    SELECT MAX(valid_date_to)
+    FROM table_b
+    WHERE hyoujun_code = a.hyoujun_code
+      AND valid_date_to < CURDATE()
+  )
+WHERE b_valid.hyoujun_code IS NOT NULL OR b_expired.hyoujun_code IS NOT NULL

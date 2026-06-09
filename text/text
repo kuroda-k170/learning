@@ -1,21 +1,428 @@
-public function new_api()
-{
-    try {
-        $result = $this->old_api_process();
+ただし、まず大事な点として、win.closed から取得できるのは「閉じたかどうか」だけです。
+win.closed 自体に任意の返り値を入れることはできません。
 
-        // 正常時
-        $this->next_process();
+なので、やり方はこうなります。
 
-    } catch (Exception $e) {
-        log_message('error', 'old_api_process failed: ' . $e->getMessage());
+別タブ側で任意の値をどこかに保存する
+↓
+親画面側が「閉じられた」と検知する
+↓
+保存された値を親画面側で読む
 
-        // エラーでも処理継続したい場合
-        $this->next_process();
+実装しやすいのは次の2つです。
 
-        // 必要ならレスポンスは正常扱いにする
-        echo json_encode([
-            'success' => true,
-            'message' => '一部処理でエラーがありましたが継続しました'
-        ]);
+方法1：別タブから親画面に値を渡す
+
+同一ドメインで開いているなら、別タブ側から親画面の関数を呼べます。
+
+親画面側
+var childResult = null;
+
+window.receiveChildResult = function (result) {
+    childResult = result;
+};
+
+var when_window_closed = (win) => {
+    return new Promise((resolve, reject) => {
+        var intervalID = setInterval(function () {
+            if (win.closed) {
+                clearInterval(intervalID);
+                resolve(childResult);
+            }
+        }, 200);
+    });
+};
+
+when_window_closed(win)
+    .then((result) => {
+        console.log('別タブから受け取った値:', result);
+
+        if (result === 'success') {
+            // 正常終了時の処理
+        } else if (result === 'cancel') {
+            // キャンセル時の処理
+        } else {
+            // 値なし・想定外
+        }
+    })
+    .catch(() => {
+    });
+別タブ側
+
+閉じる前、または処理完了時に親へ値を渡します。
+
+function closeWithResult(result) {
+    if (window.opener && !window.opener.closed) {
+        window.opener.receiveChildResult(result);
     }
+
+    window.close();
 }
+
+例えば、正常終了ボタンで閉じるなら：
+
+$('#completeBtn').on('click', function () {
+    closeWithResult('success');
+});
+
+キャンセルなら：
+
+$('#cancelBtn').on('click', function () {
+    closeWithResult('cancel');
+});
+
+この方法が一番わかりやすいです。
+
+方法2：localStorage に値を入れて、親画面で読む
+
+別タブが閉じられる直前に値を保存して、親画面が閉じた後に読む方法です。
+
+親画面側
+var resultKey = 'child_result_' + Date.now();
+
+var when_window_closed = (win, resultKey) => {
+    return new Promise((resolve, reject) => {
+        var intervalID = setInterval(function () {
+            if (win.closed) {
+                clearInterval(intervalID);
+
+                var result = localStorage.getItem(resultKey);
+                localStorage.removeItem(resultKey);
+
+                resolve(result);
+            }
+        }, 200);
+    });
+};
+
+when_window_closed(win, resultKey)
+    .then((result) => {
+        console.log('閉じた後の結果:', result);
+
+        if (result === 'success') {
+            // 正常終了
+        } else {
+            // キャンセル・未完了など
+        }
+    });
+
+フォームPOSTで別タブを開くなら、resultKey を hidden で渡します。
+
+$('<input>', {
+    type: 'hidden',
+    name: 'result_key',
+    value: resultKey
+}).appendTo($form);
+別タブ側
+
+PHP側で受け取った result_key を画面に埋め込んでおきます。
+
+<input type="hidden" id="result_key" value="<?= htmlspecialchars($result_key, ENT_QUOTES, 'UTF-8') ?>">
+
+JSで保存します。
+
+function setResult(result) {
+    var key = $('#result_key').val();
+    localStorage.setItem(key, result);
+}
+
+$('#completeBtn').on('click', function () {
+    setResult('success');
+    window.close();
+});
+
+$('#cancelBtn').on('click', function () {
+    setResult('cancel');
+    window.close();
+});
+
+手動で×ボタンで閉じられた場合にも値を入れたいなら：
+
+$(window).on('pagehide', function () {
+    var key = $('#result_key').val();
+
+    if (!localStorage.getItem(key)) {
+        localStorage.setItem(key, 'closed');
+    }
+});
+今のコードを最小変更するなら
+
+今のこれ：
+
+resolve(win);
+
+を、任意値を読む形に変えます。
+
+例えば親画面に childResult を持つなら：
+
+var childResult = null;
+
+window.receiveChildResult = function (result) {
+    childResult = result;
+};
+
+var when_window_closed = (win) => {
+    return new Promise((resolve, reject) => {
+        var intervalID = setInterval(function() {
+            if (win.closed) {
+                clearInterval(intervalID);
+                resolve(childResult);
+            }
+        }, 200);
+    });
+};
+
+when_window_closed(win)
+.then((result) => {
+    if (result === 'success') {
+        // 閉じた後、正常終了として処理
+    } else if (result === 'cancel') {
+        // キャンセル扱い
+    } else {
+        // 何も値が渡されなかった
+    }
+});
+
+別タブ側で：
+
+window.opener.receiveChildResult('success');
+window.close();
+注意点
+win.closed だけでは任意値は返せません。
+別タブと親画面が 同一ドメイン なら window.opener が使いやすいです。
+target="_blank" に rel="noopener" 相当が付いていると window.opener が使えない場合があります。
+手動で閉じる場合も拾いたいなら、pagehide や beforeunload で結果を保存する方法が安定です。
+
+今回なら、ボタン操作で閉じるなら window.opener.receiveChildResult()、手動閉じも拾いたいなら localStorage 併用がおすすめです。
+
+別タブが、PHPのコントローラーの処理をその個数によって進捗バーを表示して
+その裏で登録処理などを行い、個数が進むごとに進捗バーを進め、全ての処理が終了したら
+画面が閉じる。という動作になっておりユーザーからの操作はありません。
+また単純なPHPのECHOなどでHTMLを表示しているので、共通のJSも読み込んでいません。
+その場合はどうすればいいですか？
+思考時間: 10s
+
+その状況なら、別タブ側のPHPが最後に「結果を親画面へ渡すための短いJS」を echo するのが一番現実的です。
+
+共通JSを読み込んでいなくても大丈夫です。
+PHPの echo で、最後に <script>...</script> を出力すればできます。
+
+結論
+
+別タブ側のPHP処理が完了したタイミングで、最後にこういうJSを出します。
+
+echo "<script>
+if (window.opener && !window.opener.closed) {
+    window.opener.receiveChildResult('success');
+}
+window.close();
+</script>";
+
+親画面側では、あらかじめ receiveChildResult() を用意しておきます。
+
+var childResult = null;
+
+window.receiveChildResult = function (result) {
+    childResult = result;
+};
+
+そして、今の監視処理で閉じたタイミングに childResult を見るようにします。
+
+var when_window_closed = (win) => {
+    return new Promise((resolve, reject) => {
+        var intervalID = setInterval(function () {
+            if (win.closed) {
+                clearInterval(intervalID);
+                resolve(childResult);
+            }
+        }, 200);
+    });
+};
+
+when_window_closed(win)
+.then((result) => {
+    if (result === 'success') {
+        // 正常終了時の処理
+    } else if (result === 'error') {
+        // エラー時の処理
+    } else {
+        // 結果なしで閉じられた場合
+    }
+});
+別タブ側がPHPのechoだけなら、最後にscriptを出せばよいです
+
+例えばPHP側で処理が成功した場合：
+
+$result = 'success';
+
+echo '<script>';
+echo 'if (window.opener && !window.opener.closed) {';
+echo '  window.opener.receiveChildResult(' . json_encode($result) . ');';
+echo '}';
+echo 'window.close();';
+echo '</script>';
+
+エラー時なら：
+
+$result = 'error';
+
+echo '<script>';
+echo 'if (window.opener && !window.opener.closed) {';
+echo '  window.opener.receiveChildResult(' . json_encode($result) . ');';
+echo '}';
+echo 'window.close();';
+echo '</script>';
+
+json_encode() を使うと、JS文字列として安全に渡しやすいです。
+
+進捗バーをPHPのechoで更新している場合
+
+もし今、PHP側で件数ごとに進捗バーを動かしているなら、最後だけ結果通知を追加すればOKです。
+
+イメージ：
+
+$total = count($items);
+$current = 0;
+
+echo '<html><body>';
+echo '<div id="progress" style="width:300px;border:1px solid #000;">';
+echo '<div id="bar" style="width:0%;background:#66f;color:#fff;">0%</div>';
+echo '</div>';
+
+foreach ($items as $item) {
+    // 登録処理など
+    // $this->some_model->insert(...);
+
+    $current++;
+    $percent = floor(($current / $total) * 100);
+
+    echo '<script>';
+    echo 'document.getElementById("bar").style.width = "' . $percent . '%";';
+    echo 'document.getElementById("bar").innerHTML = "' . $percent . '%";';
+    echo '</script>';
+
+    flush();
+}
+
+// 全件完了後に親へ結果を渡して閉じる
+echo '<script>';
+echo 'if (window.opener && !window.opener.closed) {';
+echo '  window.opener.receiveChildResult("success");';
+echo '}';
+echo 'window.close();';
+echo '</script>';
+
+echo '</body></html>';
+ただし window.opener が使えない場合があります
+
+以下の場合、別タブから親画面を参照できません。
+
+noopener が付いている
+別ドメインを開いている
+ブラウザ設定やセキュリティ制約で opener が切られている
+
+その場合は、localStorage を使う方法が安定します。
+
+openerが使えない可能性も考えるなら localStorage方式
+
+親画面で一意のキーを作ります。
+
+var resultKey = 'child_result_' + Date.now();
+
+var when_window_closed = (win) => {
+    return new Promise((resolve, reject) => {
+        var intervalID = setInterval(function () {
+            if (win.closed) {
+                clearInterval(intervalID);
+
+                var result = localStorage.getItem(resultKey);
+                localStorage.removeItem(resultKey);
+
+                resolve(result);
+            }
+        }, 200);
+    });
+};
+
+別タブを開くPOSTフォームに hidden で渡します。
+
+$('<input>', {
+    type: 'hidden',
+    name: 'result_key',
+    value: resultKey
+}).appendTo($form);
+
+PHP側で受け取ります。
+
+$result_key = $this->input->post('result_key');
+
+処理完了時にPHPからこう出します。
+
+$result = 'success';
+
+echo '<script>';
+echo 'localStorage.setItem(' . json_encode($result_key) . ', ' . json_encode($result) . ');';
+echo 'window.close();';
+echo '</script>';
+
+親画面側は、別タブが閉じたあとに localStorage から値を取ります。
+
+when_window_closed(win)
+.then((result) => {
+    if (result === 'success') {
+        // 正常終了
+    } else if (result === 'error') {
+        // エラー
+    } else {
+        // 結果なし
+    }
+});
+どちらを使うべきか
+
+今回のように、
+
+親画面が別タブを開いている
+同じシステム内の画面
+最後に自動で閉じる
+共通JSは読み込んでいない
+
+なら、まずは window.opener.receiveChildResult() 方式でよいです。
+
+ただし、より確実にしたいなら、
+
+openerで親へ通知
++
+localStorageにも保存
+
+の両方を入れておくと安全です。
+
+$result = 'success';
+
+echo '<script>';
+echo 'try {';
+echo '  if (window.opener && !window.opener.closed && window.opener.receiveChildResult) {';
+echo '    window.opener.receiveChildResult(' . json_encode($result) . ');';
+echo '  }';
+echo '  localStorage.setItem(' . json_encode($result_key) . ', ' . json_encode($result) . ');';
+echo '} catch (e) {}';
+echo 'window.close();';
+echo '</script>';
+重要な考え方
+
+PHPのControllerの return 値を、親画面のJSが直接受け取ることはできません。
+
+別タブを開いているので、親画面から見ると受け取れるのは基本的に、
+
+win.closed
+
+だけです。
+
+なので、任意の値を渡したい場合は、
+
+別タブ側から window.opener に渡す
+localStorage に保存して親画面が読む
+サーバーに状態を保存して、親画面がAjaxで確認する
+
+のどれかになります。
+
+今回の構成なら、PHPの最後に結果通知用scriptをechoするのが最小改修で実現しやすいです。
